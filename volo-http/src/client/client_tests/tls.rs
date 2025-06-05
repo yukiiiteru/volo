@@ -22,7 +22,7 @@ use crate::{
 async fn client_builder_with_https() {
     let mut builder = Client::builder().layer_inner(DebugLayer::default());
     builder
-        .host("httpbin.org")
+        .target_domain("httpbin.org")
         .with_scheme(http::uri::Scheme::HTTPS);
     let client = builder.build().unwrap();
 
@@ -48,7 +48,7 @@ async fn client_builder_with_address_and_https() {
     let mut builder = Client::builder().layer_inner(DebugLayer::default());
     builder
         .default_host("httpbin.org")
-        .address(addr)
+        .target_address(addr)
         .with_scheme(http::uri::Scheme::HTTPS);
     let client = builder.build().unwrap();
 

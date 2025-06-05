@@ -6,7 +6,7 @@ use volo::net::{
 };
 
 use super::{connector::PeerInfo, plain::PlainMakeConnection};
-use crate::error::{client::request_error, ClientError};
+use crate::error::{client::connect_error, ClientError};
 
 #[derive(Clone, Debug)]
 pub struct TlsMakeConnection<S = PlainMakeConnection> {
@@ -49,7 +49,7 @@ where
             Ok(conn) => Ok(conn),
             Err(err) => {
                 tracing::error!("[Volo-HTTP] failed to make tls connection, error: {err}");
-                Err(request_error(err))
+                Err(connect_error(err))
             }
         }
     }

@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
+use faststr::FastStr;
 use http::uri::Scheme;
 use volo::{
     context::{Reusable, Role, RpcCx, RpcInfo},
@@ -22,6 +23,7 @@ impl ClientContext {
             RpcInfo::<Config>::with_role(Role::Client),
             ClientCxInner {
                 scheme: Scheme::HTTP,
+                hostname: FastStr::empty(),
                 stats: ClientStats::default(),
             },
         ))
@@ -41,8 +43,19 @@ impl_deref_and_deref_mut!(ClientContext, RpcCx<ClientCxInner, Config>, 0);
 /// Inner details of [`ClientContext`]
 #[derive(Debug)]
 pub struct ClientCxInner {
-    /// Scheme of the request.
+    // Scheme of the request.
     scheme: Scheme,
+    // Hostname of the request.
+    //
+    // It will be set as the header `Host` and used as SNI for the HTTPS handshake.
+    //
+    // Since the target domain name and hostname may be different (e.g. accessing
+    // `server.example.com` via `proxy.example.com`), we should add an extra field to save the
+    // hostname.
+    //
+    // And since service discovery (DNS) can only access the `Endpoint` instead of `ClientContext`,
+    // so we should save the domain name in callee and save hostname here.
+    hostname: FastStr,
 
     /// Statistics of client
     ///
@@ -58,6 +71,15 @@ impl ClientCxInner {
 
     pub(crate) fn set_scheme(&mut self, scheme: Scheme) {
         self.scheme = scheme;
+    }
+
+    /// Get host name of current request context.
+    pub fn hostname(&self) -> &FastStr {
+        &self.hostname
+    }
+
+    pub(crate) fn set_hostname(&mut self, hostname: FastStr) {
+        self.hostname = hostname;
     }
 }
 

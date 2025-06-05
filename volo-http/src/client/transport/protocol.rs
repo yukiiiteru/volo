@@ -308,7 +308,7 @@ where
             scheme: cx.scheme().to_owned(),
             address,
             #[cfg(feature = "__tls")]
-            name: callee.service_name(),
+            name: cx.hostname().clone(),
         };
 
         let stat_enabled = self.config.stat_enable;

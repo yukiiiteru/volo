@@ -145,11 +145,8 @@ impl<S, B> RequestBuilder<S, B> {
     /// Set uri for building request.
     ///
     /// The uri will be split into two parts scheme+host and path+query. The scheme and host can be
-    /// empty and it will be resolved as the target address. The path and query must exist and they
-    /// are used to build the request uri.
-    ///
-    /// Note that only path and query will be set to the request uri. For setting the full uri, use
-    /// `full_uri` instead.
+    /// empty and it will be resolved as the target. The path and query must exist and they are used
+    /// to build the request uri.
     pub fn uri<U>(mut self, uri: U) -> Self
     where
         U: TryInto<Uri>,
@@ -180,29 +177,6 @@ impl<S, B> RequestBuilder<S, B> {
             .unwrap_or_else(|| PathAndQuery::from_static("/"))
             .into();
         *self.request.uri_mut() = rela_uri;
-
-        self
-    }
-
-    /// Set full uri for building request.
-    ///
-    /// This function is only used for using http(s) proxy.
-    pub fn full_uri<U>(mut self, uri: U) -> Self
-    where
-        U: TryInto<Uri>,
-        U::Error: Into<BoxError>,
-    {
-        if self.status.is_err() {
-            return self;
-        }
-        let uri = match uri.try_into() {
-            Ok(uri) => uri,
-            Err(err) => {
-                self.status = Err(builder_error(err));
-                return self;
-            }
-        };
-        *self.request.uri_mut() = uri;
 
         self
     }
@@ -288,6 +262,10 @@ impl<S, B> RequestBuilder<S, B> {
     }
 
     /// Set target address for the request.
+    ///
+    /// Note that it works only when there is no target address in [`Client`].
+    ///
+    /// [`Client`]: crate::client::Client
     pub fn address<A>(mut self, address: A) -> Self
     where
         A: Into<Address>,
@@ -302,6 +280,11 @@ impl<S, B> RequestBuilder<S, B> {
     ///
     /// For setting scheme and port, use [`Self::with_scheme`] and [`Self::with_port`] after
     /// specifying host.
+    ///
+    /// If there is a target address in [`Client`], this function will only set `Host` in request
+    /// headers (and SNI if this request uses HTTPS).
+    ///
+    /// [`Client`]: crate::client::Client
     pub fn host<H>(mut self, host: H) -> Self
     where
         H: Into<Cow<'static, str>>,

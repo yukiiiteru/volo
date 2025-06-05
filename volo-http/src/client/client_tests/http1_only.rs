@@ -38,7 +38,7 @@ use crate::{
         CallOpt, Client,
     },
     context::client::Config,
-    error::ClientError,
+    error::client::{ClientError, ErrorKind},
     response::Response,
     utils::consts::HTTP_DEFAULT_PORT,
 };
@@ -157,53 +157,210 @@ async fn client_builder_with_header() {
     assert_eq!(resp.url, HTTPBIN_GET);
 }
 
+// Test cases:
+//
+// 1. default target
+//   a. have default target
+//   b. no default target
+// 2. request target
+//   a. have request target
+//   b. no request target
+// 3. default host
+//   a. have default host
+//   b. use auto host
+//
+// aaa -> client_builder_addr_override
+// aab -> client_builder_host_override
+// aba -> client_builder_with_domain_default_host & client_builder_with_address
+// abb -> client_builder_with_domain
+// baa -> client_builder_with_default_host
+// bab -> simple_get & client_builder_with_header
+// bba/bbb -> no_target_request
+
 #[cfg(feature = "json")]
 #[tokio::test]
-async fn client_builder_with_host() {
-    let mut builder = Client::builder().layer_inner(DebugLayer::default());
-    builder.host("httpbin.org");
-    let client = builder.build().unwrap();
-
-    let resp = client
-        .get("/get")
-        .send()
-        .await
-        .unwrap()
-        .into_json::<HttpBinResponse>()
-        .await
-        .unwrap();
-    assert!(resp.args.is_empty());
-    assert_eq!(resp.url, HTTPBIN_GET);
-}
-
-#[cfg(feature = "json")]
-#[tokio::test]
-async fn client_builder_with_address() {
-    let addr = DnsResolver::default()
+async fn client_builder_addr_override() {
+    let invalid_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8888);
+    let httpbin_addr = DnsResolver::default()
         .resolve("httpbin.org", HTTP_DEFAULT_PORT)
         .await
         .unwrap();
-    let mut builder = Client::builder().layer_inner(DebugLayer::default());
-    builder.default_host("httpbin.org").address(addr);
-    let client = builder.build().unwrap();
 
-    let resp = client
-        .get("/get")
-        .send()
-        .await
-        .unwrap()
-        .into_json::<HttpBinResponse>()
-        .await
-        .unwrap();
-    assert!(resp.args.is_empty());
-    assert_eq!(resp.url, HTTPBIN_GET);
+    // default target (valid addr to httpbin)
+    // request target (invalid addr)
+    // default host
+    {
+        let mut builder = Client::builder().layer_inner(DebugLayer::default());
+        builder
+            .default_host("httpbin.org")
+            .target_address(httpbin_addr.clone());
+        let client = builder.build().unwrap();
+        let resp = client
+            .get(format!("http://{invalid_addr}/get"))
+            .send()
+            .await
+            .unwrap()
+            .into_json::<HttpBinResponse>()
+            .await
+            .unwrap();
+        assert!(resp.args.is_empty());
+        // The authority is an IP address and the address will be ignored.
+        assert_eq!(resp.url, HTTPBIN_GET);
+    }
+    // default target (valid addr to httpbin)
+    // request target (invalid addr)
+    // default host (it's strange but httpbin does not care it)
+    {
+        let strange_domain = "hpptboom.org";
+        let mut builder = Client::builder().layer_inner(DebugLayer::default());
+        builder
+            .default_host(strange_domain)
+            .target_address(httpbin_addr.clone());
+        let client = builder.build().unwrap();
+        let resp = client
+            .get(format!("http://{invalid_addr}/get"))
+            .send()
+            .await
+            .unwrap()
+            .into_json::<HttpBinResponse>()
+            .await
+            .unwrap();
+        assert!(resp.args.is_empty());
+        // The authority is a domain name and it will be used as header `Host`, but the destination
+        // address is still the `target_address`.
+        assert_eq!(resp.url, format!("http://{strange_domain}/get"));
+    }
+    // default target (invalid addr)
+    // request target
+    // default host
+    {
+        let mut builder = Client::builder().layer_inner(DebugLayer::default());
+        builder
+            .default_host("httpbin.org")
+            .target_address(invalid_addr);
+        let client = builder.build().unwrap();
+
+        let err = client
+            .get(format!("http://{httpbin_addr}/get"))
+            .send()
+            .await
+            .unwrap_err();
+        // The new address cannot override the `target_address`, so it fails
+        assert_eq!(err.kind(), &ErrorKind::Connect);
+    }
 }
 
 #[cfg(feature = "json")]
 #[tokio::test]
 async fn client_builder_host_override() {
+    // default target (valid domain httpbin.org)
+    // request target (invalid domain but httpbin does not care it)
+    // no host
+    {
+        let mut builder = Client::builder().layer_inner(DebugLayer::default());
+        builder.target_domain("httpbin.org");
+        let client = builder.build().unwrap();
+        let test_url = "http://hpptboom.org/get";
+
+        let resp = client
+            .get(test_url)
+            .send()
+            .await
+            .unwrap()
+            .into_json::<HttpBinResponse>()
+            .await
+            .unwrap();
+        assert!(resp.args.is_empty());
+        // Well `httpbin.org` will concat scheme+host+uri directly without checking the `Host`, so
+        // we can get the strange url as result.
+        assert_eq!(resp.url, test_url);
+    }
+    // default target (invalid domain)
+    // request target (valid domain httpbin.org but it does not work)
+    // no host
+    {
+        let mut builder = Client::builder().layer_inner(DebugLayer::default());
+        builder.target_domain("this.domain.must.be.invalid");
+        let client = builder.build().unwrap();
+
+        let err = client.get(HTTPBIN_GET).send().await.unwrap_err();
+        assert_eq!(err.kind(), &ErrorKind::LoadBalance);
+    }
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn client_builder_with_domain_default_host() {
+    // default target, no request target, default host
+    let strange_host = "hpptboom.org";
     let mut builder = Client::builder().layer_inner(DebugLayer::default());
-    builder.host("this.domain.must.be.invalid");
+    builder
+        .target_domain("httpbin.org")
+        .default_host(strange_host);
+    let client = builder.build().unwrap();
+
+    let resp = client
+        .get("/get")
+        .send()
+        .await
+        .unwrap()
+        .into_json::<HttpBinResponse>()
+        .await
+        .unwrap();
+    assert!(resp.args.is_empty());
+    assert_eq!(resp.url, format!("http://{strange_host}/get"));
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn client_builder_with_address() {
+    // default target, no request target, default host
+    let addr = DnsResolver::default()
+        .resolve("httpbin.org", HTTP_DEFAULT_PORT)
+        .await
+        .unwrap();
+    let mut builder = Client::builder().layer_inner(DebugLayer::default());
+    builder.default_host("httpbin.org").target_address(addr);
+    let client = builder.build().unwrap();
+
+    let resp = client
+        .get("/get")
+        .send()
+        .await
+        .unwrap()
+        .into_json::<HttpBinResponse>()
+        .await
+        .unwrap();
+    assert!(resp.args.is_empty());
+    assert_eq!(resp.url, HTTPBIN_GET);
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn client_builder_with_domain() {
+    // default target, no request target, auto host
+    let mut builder = Client::builder().layer_inner(DebugLayer::default());
+    builder.target_domain("httpbin.org");
+    let client = builder.build().unwrap();
+
+    let resp = client
+        .get("/get")
+        .send()
+        .await
+        .unwrap()
+        .into_json::<HttpBinResponse>()
+        .await
+        .unwrap();
+    assert!(resp.args.is_empty());
+    assert_eq!(resp.url, HTTPBIN_GET);
+}
+
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn client_builder_with_default_host() {
+    // no default target, have request target, default host
+    let mut builder = Client::builder().layer_inner(DebugLayer::default());
+    builder.default_host("hpptboom.org");
     let client = builder.build().unwrap();
 
     let resp = client
@@ -218,37 +375,27 @@ async fn client_builder_host_override() {
     assert_eq!(resp.url, HTTPBIN_GET);
 }
 
-#[cfg(feature = "json")]
 #[tokio::test]
-async fn client_builder_addr_override() {
-    let mut builder = Client::builder().layer_inner(DebugLayer::default());
-    builder.default_host("httpbin.org").address(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-        8888,
-    ));
-    let client = builder.build().unwrap();
-
-    let addr = DnsResolver::default()
-        .resolve("httpbin.org", HTTP_DEFAULT_PORT)
-        .await
-        .unwrap();
-
-    let resp = client
-        .get(format!("http://{addr}/get"))
-        .send()
-        .await
-        .unwrap()
-        .into_json::<HttpBinResponse>()
-        .await
-        .unwrap();
-    assert!(resp.args.is_empty());
-    assert_eq!(resp.url, HTTPBIN_GET);
+async fn no_target_request() {
+    let client = Client::default();
+    let err = client.get("/").send().await.unwrap_err();
+    // ClientError {
+    //     kind: LoadBalance,
+    //     source: Some(
+    //         Discover(
+    //             ClientError { kind: Builder, source: Some(NoAddress), uri: None, addr: None },
+    //         ),
+    //     ),
+    //     uri: None,
+    //     addr: None,
+    // }
+    assert_eq!(err.kind(), &ErrorKind::LoadBalance);
 }
 
 #[tokio::test]
 async fn client_builder_with_port() {
     let mut builder = Client::builder().layer_inner(DebugLayer::default());
-    builder.host("httpbin.org").with_port(443);
+    builder.target_domain("httpbin.org").with_port(443);
     let client = builder.build().unwrap();
 
     let resp = client.get("/get").send().await.unwrap();
@@ -390,7 +537,7 @@ async fn cookie_store() {
         .layer_inner(DebugLayer::default())
         .layer_inner(crate::client::cookie::CookieLayer::new(Default::default()));
 
-    builder.host("httpbin.org");
+    builder.target_domain("httpbin.org");
 
     let client = builder.build().unwrap();
 

@@ -136,7 +136,7 @@ impl<IL, OL, C, LB> ClientBuilder<IL, OL, C, LB> {
             // set a default target so that we can create a request without authority
             target: Target::from(mock_address()),
             timeout: self.timeout,
-            default_callee_name: FastStr::empty(),
+            callee_name: FastStr::empty(),
             headers: self.headers,
         };
         let client = Client {

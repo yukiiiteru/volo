@@ -150,13 +150,24 @@ impl Target {
     }
 
     /// Create a [`Target`] through a host name
+    #[deprecated(
+        note = "To avoid ambiguity, `Target::from_host` has been changed to `Target::from_domain`"
+    )]
     pub fn from_host<S>(host: S) -> Self
     where
         S: Into<Cow<'static, str>>,
     {
-        let host = FastStr::from(host.into());
+        Self::from_domain(host)
+    }
+
+    /// Create a [`Target`] through a domain name
+    pub fn from_domain<S>(domain: S) -> Self
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        let domain = FastStr::from(domain.into());
         // SAFETY: HTTP is always valid
-        unsafe { Self::new_host_unchecked(Scheme::HTTP, host, consts::HTTP_DEFAULT_PORT) }
+        unsafe { Self::new_host_unchecked(Scheme::HTTP, domain, consts::HTTP_DEFAULT_PORT) }
     }
 
     /// Create a [`Target`] from [`Uri`]
@@ -303,17 +314,12 @@ impl From<Address> for Target {
 impl Apply<ClientContext> for Target {
     type Error = ClientError;
 
+    // `RequestBuilder` will apply its `Target` first, and then `Client` will apply its `Target`.
+    //
+    // The destination should be `Target` of `Client`. If it exists, it should be overrided.
     fn apply(self, cx: &mut ClientContext) -> Result<(), Self::Error> {
         if self.is_none() {
             return Ok(());
-        }
-
-        {
-            let callee = cx.rpc_info().callee();
-            if !(callee.service_name_ref().is_empty() && callee.address.is_none()) {
-                // Target exists in context
-                return Ok(());
-            }
         }
 
         match self {
@@ -326,6 +332,11 @@ impl Apply<ClientContext> for Target {
                         cx.rpc_info_mut().callee_mut().set_address(Address::Ip(sa));
                     }
                     RemoteTargetAddress::Name(host) => {
+                        // hostname should NOT be overrided
+                        if cx.hostname().is_empty() {
+                            cx.set_hostname(host.clone());
+                        }
+
                         let port = rt.port;
                         tracing::trace!("[Volo-HTTP] Target::apply: set target to {host}:{port}");
                         let callee = cx.rpc_info_mut().callee_mut();

@@ -177,8 +177,8 @@ fn gen_host(
 
 fn gen_host_by_cx(cx: &ClientContext) -> Option<HeaderValue> {
     let scheme = cx.scheme();
+    let name = cx.hostname();
     let ep = cx.rpc_info().callee();
-    let name = ep.service_name_ref();
     let addr = ep.address.as_ref();
     let port = ep.get::<Port>().map(Deref::deref).cloned();
     gen_host(scheme, name, addr, port)
@@ -197,10 +197,10 @@ where
         mut req: Request<B>,
     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send {
         if !req.headers().contains_key(header::HOST) {
-            if let Some(val) = gen_host_by_cx(cx) {
-                req.headers_mut().insert(header::HOST, val);
-            } else if let Some(val) = &self.val {
+            if let Some(val) = &self.val {
                 req.headers_mut().insert(header::HOST, val.clone());
+            } else if let Some(val) = gen_host_by_cx(cx) {
+                req.headers_mut().insert(header::HOST, val);
             }
         }
         self.inner.call(cx, req)

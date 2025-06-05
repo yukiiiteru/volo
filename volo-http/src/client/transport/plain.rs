@@ -4,7 +4,7 @@ use motore::{make::MakeConnection, service::UnaryService};
 use volo::net::{dial::DefaultMakeTransport, Address};
 
 use super::connector::PeerInfo;
-use crate::error::{client::request_error, ClientError};
+use crate::error::{client::connect_error, ClientError};
 
 #[derive(Clone, Debug)]
 pub struct PlainMakeConnection<MkC = DefaultMakeTransport> {
@@ -40,7 +40,7 @@ where
             Ok(conn) => Ok(conn),
             Err(err) => {
                 tracing::error!("[Volo-HTTP] failed to make connection, error: {err}");
-                Err(request_error(err).with_address(req.address))
+                Err(connect_error(err).with_address(req.address))
             }
         }
     }
