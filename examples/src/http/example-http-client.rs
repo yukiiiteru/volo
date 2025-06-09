@@ -17,11 +17,12 @@ struct Person {
 #[volo::main]
 async fn main() -> Result<(), BoxError> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // simple `get` function with dns resolve
+    println!(" ==== http://httpbin.org/get ====");
     println!(
         "{}",
         get("http://httpbin.org/get").await?.into_string().await?
@@ -30,6 +31,7 @@ async fn main() -> Result<(), BoxError> {
     // HTTPS `get`
     #[cfg(feature = "__tls")]
     {
+        println!(" ==== https://httpbin.org/get ====");
         println!(
             "{}",
             get("https://httpbin.org/get").await?.into_string().await?
@@ -37,21 +39,44 @@ async fn main() -> Result<(), BoxError> {
     }
 
     // create client by builder
-    let client = {
+    let example_client = {
         let mut builder = ClientBuilder::new();
         builder
             .user_agent("example.http.client")
             .default_host("example.http.server")
             // set default target address
-            .address("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
+            .target_address("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
             .header("Test", "Test");
         builder.build()?
     };
 
-    // set host and override the default one
+    println!(" ==== http://127.0.0.1:8080/ ====");
     println!(
         "{}",
-        client
+        example_client
+            .get("http://127.0.0.1:8080/")
+            .send()
+            .await?
+            .into_string()
+            .await?
+    );
+    println!(" ==== http://127.0.0.1:8080/ ====");
+    println!(
+        "{}",
+        example_client.get("/").send().await?.into_string().await?
+    );
+
+    let httpbin_client = {
+        let mut builder = ClientBuilder::new();
+        builder.target_domain("httpbin.org");
+        builder.build()?
+    };
+
+    // set host and override the default one
+    println!(" ==== http://httpbin.org/get ====");
+    println!(
+        "{}",
+        httpbin_client
             .request_builder()
             .host("httpbin.org")
             .uri("/get")
@@ -61,58 +86,34 @@ async fn main() -> Result<(), BoxError> {
             .await?
     );
 
+    // an empty client
+    let empty_client = ClientBuilder::new().build()?;
+    println!(" ==== http://127.0.0.1:8080/ ====");
     println!(
         "{}",
-        client
+        empty_client
             .get("http://127.0.0.1:8080/")
             .send()
             .await?
             .into_string()
             .await?
     );
-
-    // use default target address
+    println!(" ==== http://127.0.0.1:8080/user/json_get ====");
     println!(
         "{:?}",
-        client
+        httpbin_client
             .request_builder()
-            .uri("/user/json_get")
+            .uri("http://127.0.0.1:8080/user/json_get")
             .send()
             .await?
             .into_json::<Person>()
             .await?
     );
-    println!(
-        "{:?}",
-        client
-            .post("/user/json_post")
-            .json(&Person {
-                name: "Foo".to_string(),
-                age: 25,
-                phones: vec!["114514".to_string()],
-            })
-            .send()
-            .await?
-            .into_string()
-            .await?
-    );
-
-    // an empty client
-    let client = ClientBuilder::new().build()?;
-    println!(
-        "{}",
-        client
-            .get("http://127.0.0.1:8080/")
-            .send()
-            .await?
-            .into_string()
-            .await?
-    );
-
     // invalid request because there is no target address
+    println!(" ==== invalid url, error is expected ====");
     println!(
         "{:?}",
-        client
+        empty_client
             .get("/")
             .send()
             .await
