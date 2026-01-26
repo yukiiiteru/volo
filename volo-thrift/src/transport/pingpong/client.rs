@@ -1,4 +1,11 @@
-use std::{io, marker::PhantomData};
+use std::{
+    io,
+    marker::PhantomData,
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use motore::service::{Service, UnaryService};
 use pilota::thrift::TransportException;
@@ -14,6 +21,24 @@ use crate::{
         pool::{Config, PooledMakeTransport, Ver},
     },
 };
+
+static ALIVE_STREAM: AtomicUsize = AtomicUsize::new(0);
+static PRINT_WORKER: LazyLock<tokio::task::JoinHandle<()>> = LazyLock::new(|| {
+    tokio::spawn(async {
+        loop {
+            tracing::warn!(
+                "[SHMIPC-DEBUG] {}: alive stream: {}",
+                time(),
+                ALIVE_STREAM.load(Ordering::Relaxed)
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    })
+});
+
+fn time() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
 
 #[derive(Clone)]
 pub struct MakeClientTransport<MkT, MkC>
@@ -111,6 +136,8 @@ where
         cx: &mut ClientContext,
         req: ThriftMessage<Req>,
     ) -> Result<Self::Response, Self::Error> {
+        let _ = &*PRINT_WORKER;
+
         let rpc_info = &cx.rpc_info;
         let target = rpc_info.callee().address().ok_or_else(|| {
             TransportException::from(io::Error::new(
@@ -122,6 +149,13 @@ where
         cx.stats.record_make_transport_start_at();
         let mut transport = self.make_transport.call((target, Ver::PingPong)).await?;
         cx.stats.record_make_transport_end_at();
+        #[cfg(feature = "shmipc")]
+        {
+            if transport.shmipc_helper().available() {
+                ALIVE_STREAM.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
         let resp = transport.send(cx, req, oneway).await;
         if let Ok(None) = resp {
             if !oneway {
@@ -148,6 +182,7 @@ where
         {
             let helper = transport.shmipc_helper();
             if helper.available() {
+                ALIVE_STREAM.fetch_sub(1, Ordering::Relaxed);
                 helper.reuse().await;
             } else if cx.transport.should_reuse && resp.is_ok() {
                 transport.reuse().await;
