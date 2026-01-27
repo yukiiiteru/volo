@@ -20,6 +20,9 @@ use crate::{
     utils::DebugCounter,
 };
 
+static INFLIGHT_COUNTRER: LazyLock<Arc<DebugCounter>> =
+    LazyLock::new(|| DebugCounter::new("CLIENT-CONNECTING", 1000));
+
 static STREAM_COUNTRER: LazyLock<Arc<DebugCounter>> =
     LazyLock::new(|| DebugCounter::new("CLIENT-STREAM", 1000));
 
@@ -127,9 +130,11 @@ where
             ))
         })?;
         let oneway = cx.message_type == TMessageType::OneWay;
+        INFLIGHT_COUNTRER.inc();
         cx.stats.record_make_transport_start_at();
         let mut transport = self.make_transport.call((target, Ver::PingPong)).await?;
         cx.stats.record_make_transport_end_at();
+        INFLIGHT_COUNTRER.dec();
         #[cfg(feature = "shmipc")]
         {
             if transport.shmipc_helper().available() {
