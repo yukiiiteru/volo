@@ -1,10 +1,7 @@
 use std::{
     io,
     marker::PhantomData,
-    sync::{
-        LazyLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, LazyLock},
 };
 
 use motore::service::{Service, UnaryService};
@@ -20,31 +17,11 @@ use crate::{
         pingpong::thrift_transport::ThriftTransport,
         pool::{Config, PooledMakeTransport, Ver},
     },
+    utils::DebugCounter,
 };
 
-static ALIVE_STREAM: AtomicUsize = AtomicUsize::new(0);
-static OPEN_STREAM: AtomicUsize = AtomicUsize::new(0);
-static CLOSE_STREAM: AtomicUsize = AtomicUsize::new(0);
-
-static PRINT_WORKER: LazyLock<tokio::task::JoinHandle<()>> = LazyLock::new(|| {
-    tokio::spawn(async {
-        loop {
-            tracing::warn!(
-                "[SHMIPC-DEBUG] {}: alive stream: {}, open stream per second: {}, close stream \
-                 per second: {}",
-                time(),
-                ALIVE_STREAM.load(Ordering::Relaxed),
-                OPEN_STREAM.swap(0, Ordering::Relaxed),
-                CLOSE_STREAM.swap(0, Ordering::Relaxed),
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-    })
-});
-
-fn time() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
-}
+static STREAM_COUNTRER: LazyLock<Arc<DebugCounter>> =
+    LazyLock::new(|| DebugCounter::new("CLIENT-STREAM", 1000));
 
 #[derive(Clone)]
 pub struct MakeClientTransport<MkT, MkC>
@@ -142,8 +119,6 @@ where
         cx: &mut ClientContext,
         req: ThriftMessage<Req>,
     ) -> Result<Self::Response, Self::Error> {
-        let _ = &*PRINT_WORKER;
-
         let rpc_info = &cx.rpc_info;
         let target = rpc_info.callee().address().ok_or_else(|| {
             TransportException::from(io::Error::new(
@@ -158,8 +133,7 @@ where
         #[cfg(feature = "shmipc")]
         {
             if transport.shmipc_helper().available() {
-                ALIVE_STREAM.fetch_add(1, Ordering::Relaxed);
-                OPEN_STREAM.fetch_add(1, Ordering::Relaxed);
+                STREAM_COUNTRER.inc();
             }
         }
 
@@ -190,8 +164,7 @@ where
             let helper = transport.shmipc_helper();
             if helper.available() {
                 helper.reuse().await;
-                ALIVE_STREAM.fetch_sub(1, Ordering::Relaxed);
-                CLOSE_STREAM.fetch_add(1, Ordering::Relaxed);
+                STREAM_COUNTRER.dec();
             } else if cx.transport.should_reuse && resp.is_ok() {
                 transport.reuse().await;
             }

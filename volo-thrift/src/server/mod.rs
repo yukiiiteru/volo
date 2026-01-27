@@ -1,6 +1,6 @@
 use std::{
     marker::PhantomData,
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, LazyLock, atomic::Ordering},
     time::Duration,
 };
 
@@ -34,6 +34,7 @@ use crate::{
     context::ServerContext,
     server::layer::biz_error::BizErrorLayer,
     tracing::{DefaultProvider, SpanProvider},
+    utils::DebugCounter,
 };
 
 mod layer;
@@ -393,6 +394,9 @@ impl<S, L, Req, MkC, SP> Server<S, L, Req, MkC, SP> {
     }
 }
 
+static STREAM_COUNTER: LazyLock<Arc<DebugCounter>> =
+    LazyLock::new(|| DebugCounter::new("SERVER-STREAM", 1000));
+
 #[allow(clippy::too_many_arguments)]
 async fn handle_conn<R, W, Req, Svc, Resp, MkC, SP>(
     rh: R,
@@ -417,8 +421,10 @@ async fn handle_conn<R, W, Req, Svc, Resp, MkC, SP>(
     SP: SpanProvider,
 {
     conn_cnt.fetch_add(1, Ordering::Relaxed);
+    STREAM_COUNTER.inc();
     defer! {
         conn_cnt.fetch_sub(1, Ordering::Relaxed);
+        STREAM_COUNTER.dec();
     }
 
     let (encoder, decoder) = make_codec.make_codec(rh, wh);

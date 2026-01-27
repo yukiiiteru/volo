@@ -10,6 +10,7 @@ mod message_wrapper;
 mod protocol;
 pub mod tracing;
 pub mod transport;
+mod utils;
 
 pub mod client;
 pub use client::Client;
