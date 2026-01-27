@@ -23,13 +23,19 @@ use crate::{
 };
 
 static ALIVE_STREAM: AtomicUsize = AtomicUsize::new(0);
+static OPEN_STREAM: AtomicUsize = AtomicUsize::new(0);
+static CLOSE_STREAM: AtomicUsize = AtomicUsize::new(0);
+
 static PRINT_WORKER: LazyLock<tokio::task::JoinHandle<()>> = LazyLock::new(|| {
     tokio::spawn(async {
         loop {
             tracing::warn!(
-                "[SHMIPC-DEBUG] {}: alive stream: {}",
+                "[SHMIPC-DEBUG] {}: alive stream: {}, open stream per second: {}, close stream \
+                 per second: {}",
                 time(),
-                ALIVE_STREAM.load(Ordering::Relaxed)
+                ALIVE_STREAM.load(Ordering::Relaxed),
+                OPEN_STREAM.swap(0, Ordering::Relaxed),
+                CLOSE_STREAM.swap(0, Ordering::Relaxed),
             );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
@@ -153,6 +159,7 @@ where
         {
             if transport.shmipc_helper().available() {
                 ALIVE_STREAM.fetch_add(1, Ordering::Relaxed);
+                OPEN_STREAM.fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -182,8 +189,9 @@ where
         {
             let helper = transport.shmipc_helper();
             if helper.available() {
-                ALIVE_STREAM.fetch_sub(1, Ordering::Relaxed);
                 helper.reuse().await;
+                ALIVE_STREAM.fetch_sub(1, Ordering::Relaxed);
+                CLOSE_STREAM.fetch_add(1, Ordering::Relaxed);
             } else if cx.transport.should_reuse && resp.is_ok() {
                 transport.reuse().await;
             }
