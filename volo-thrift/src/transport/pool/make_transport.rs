@@ -46,7 +46,7 @@ impl<MT, K: Key> UnaryService<(K, Option<K>, Ver)> for PooledMakeTransport<MT, K
 where
     MT: UnaryService<K> + Send + Clone + 'static + Sync,
     MT::Response: Poolable + Send,
-    MT::Error: Into<crate::ClientError> + Send,
+    MT::Error: Into<crate::ClientError> + std::fmt::Debug + Send,
 {
     type Response = Transport<K, MT::Response>;
 
@@ -55,8 +55,11 @@ where
     async fn call(&self, kv: (K, Option<K>, Ver)) -> Result<Self::Response, Self::Error> {
         let mt = self.inner.clone();
         if let Some(addr) = kv.1 {
-            if let Ok(resp) = mt.call(addr.clone()).await {
-                return Ok(Transport::Shm(resp));
+            match mt.call(addr.clone()).await {
+                Ok(resp) => return Ok(Transport::Shm(resp)),
+                Err(e) => {
+                    tracing::warn!("SHMIPC: failed to make shmipc transport: {e:?}");
+                }
             }
         }
         self.pool
